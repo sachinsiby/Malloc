@@ -64,25 +64,91 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
+#define NUM_BINS 66
+
 void* heap_listp = NULL;
+void* HeapStart = NULL;
+void* MemStart = NULL;
+
+size_t HeapSize = 0;
+
+void* extend_heap_init(size_t);
+
+void printSegList()
+{
+   int i;
+   for(i =0; i< NUM_BINS; i++)
+   {
+       int label = (i+1)*16;
+       void* binPtr = HeapStart + WSIZE*i;
+       printf("(%p) %d->",binPtr,label);
+       if(binPtr)
+       {
+           void* currentNode = GET(binPtr);
+           while(currentNode)
+           {
+             printf("%p-->",currentNode);
+             fflush(stdout);
+             currentNode = GET(currentNode+WSIZE);
+           }
+       }
+       printf("NULL\n");
+   }
+}
+
+
 
 /**********************************************************
  * mm_init
- * Initialize the heap, including "allocation" of the
- * prologue and epilogue
+ * Initialize the heap.
+ * Stores address to different segregations.
+ * Extends heap by NUM_BINS
  **********************************************************/
  int mm_init(void)
  {
-   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
-         return -1;
-     PUT(heap_listp, 0);                         // alignment padding
-     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));   // prologue header
-     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));   // prologue footer
-     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));    // epilogue header
-     heap_listp += DSIZE;
+	// ADD COMMENTS HERE
+	int i;	
+	
+	HeapStart = extend_heap_init((size_t)NUM_BINS);
+	if(!HeapStart)
+	{
+		return -1;
+	}
+	
+	for(i=0; i<NUM_BINS; i++)
+	{
+		void* binPtr = HeapStart + WSIZE*i;
+		PUT(binPtr,NULL);
+	}
 
-     return 0;
+	MemStart = HeapStart + WSIZE*NUM_BINS;
+	return 0;
  }
+
+
+ int testmm_init()
+ {
+	
+	int i = 0;
+	printf("Initial Heapsize is %zu\n",HeapSize);
+	for (i=0; i < NUM_BINS; i++)
+	{
+		void* binPtr = HeapStart + WSIZE* i;		
+	if(GET(binPtr))
+		{
+			printf("Error initializing %d\n",i);
+		}
+		else
+		{
+			printf("Correct initializing %d\n",i);
+		}
+	
+	}
+	printf("Final Heapsize is %zu\n",HeapSize);
+ }
+ 
+
+
 
 /**********************************************************
  * coalesce
@@ -125,6 +191,20 @@ void *coalesce(void *bp)
     }
 }
 
+void *extend_heap_init(size_t words) {
+    char *bp;
+    size_t size;
+
+    /* Allocate an even number of words to maintain alignments */
+    size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+    if ( (bp = mem_sbrk(size)) == (void *)-1 )
+        return NULL;
+
+    HeapSize = HeapSize + size;
+
+    return bp;
+}
+
 /**********************************************************
  * extend_heap
  * Extend the heap by "words" words, maintaining alignment
@@ -141,13 +221,19 @@ void *extend_heap(size_t words)
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
         return NULL;
 
+    bp = bp + WSIZE;
+
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));                // free block header
     PUT(FTRP(bp), PACK(size, 0));                // free block footer
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));        // new epilogue header
+    //PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));        // new epilogue header
+	
+	/*Increment global counter*/
+	HeapSize = HeapSize + size;
 
     /* Coalesce if the previous block was free */
-    return coalesce(bp);
+    //return coalesce(bp);
+    return bp;
 }
 
 
@@ -179,24 +265,97 @@ void place(void* bp, size_t asize)
   /* Get the current block size */
   size_t bsize = GET_SIZE(HDRP(bp));
 
+  /* Set allocated value to "used" */
   PUT(HDRP(bp), PACK(bsize, 1));
   PUT(FTRP(bp), PACK(bsize, 1));
 }
 
+
+size_t getAdjustedSize(size_t size)
+{
+    /* Adjust block size to include overhead and alignment reqs. */
+   size_t asize; 	  
+   if (size <= DSIZE)
+        asize = 2 * DSIZE;
+    else
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
+
+	return asize;
+}
+
+int getIndex(size_t adjustedSize)
+{
+    //Finds index in global segregated list
+    if (adjustedSize/DSIZE < NUM_BINS)
+    {
+        return adjustedSize/DSIZE - 1;
+    } 
+
+    // If it's in the last bin, it can be any size > NUM_BINS*16
+
+    return NUM_BINS-1;
+}
 /**********************************************************
  * mm_free
  * Free the block and coalesce with neighbouring blocks
  **********************************************************/
-void mm_free(void *bp)
+void mm_free(void *blockPointer)
 {
-    if(bp == NULL){
+    if(blockPointer == NULL){
       return;
     }
-    size_t size = GET_SIZE(HDRP(bp));
-    PUT(HDRP(bp), PACK(size,0));
-    PUT(FTRP(bp), PACK(size,0));
-    coalesce(bp);
+
+    size_t adjustedSize = GET_SIZE(HDRP(blockPointer));
+    PUT(HDRP(blockPointer), PACK(adjustedSize,0));
+    PUT(FTRP(blockPointer), PACK(adjustedSize,0));
+    //coalesce(blockPointer);
+
+    printf("Size of block is %zu\n",adjustedSize);
+    int currIndex = getIndex(adjustedSize);
+    void* baseFromIndex = HeapStart + currIndex*WSIZE;
+    printf("location is %p\n",baseFromIndex);
+    void* head = GET(baseFromIndex);
+    
+    //Change head in global segregated list
+    PUT(baseFromIndex, blockPointer);
+
+    //Change previous and next
+    PUT(blockPointer+WSIZE, head);
+    PUT(blockPointer, NULL);
+
+    if(head)
+    {
+        PUT(head,blockPointer);
+    }
 }
+
+
+void testFree()
+{
+    
+    int* a = (int*)mm_malloc(sizeof(int*));
+    int* b = (int*)mm_malloc(sizeof(int*));
+
+    void* c = mm_malloc(128);
+
+    mm_free(a);
+    printSegList();
+    printf("Freeed a\n");
+
+    mm_free(b);
+    printSegList();
+    printf("Freed b\n");
+
+    mm_free(c);
+    printSegList();
+    printf("Adjusted size of 128 is %zu\n",getAdjustedSize(128));
+    printf("Freed c\n");
+
+    printf("Index of 128 is %d\n",getIndex(128));
+
+}
+
+
 
 
 /**********************************************************
@@ -207,36 +366,244 @@ void mm_free(void *bp)
  *   in place(..)
  * If no block satisfies the request, the heap is extended
  **********************************************************/
+void *getBestFit(void* baseOfIndex,size_t adjustedSize,int currIndex);
+void *extendHeapAndAlloc(size_t adjustedSize);
+void markAssigned(void* assignedBlock, size_t adjustedSize, int currIndex);
 void *mm_malloc(size_t size)
 {
-    size_t asize; /* adjusted block size */
+	
+    size_t adjustedSize; /* adjusted block size */
     size_t extendsize; /* amount to extend heap if no fit */
     char * bp;
-
+	int currIndex = 0;
+	void* baseOfIndex;
+    char* assignedBlock = NULL;
+	
     /* Ignore spurious requests */
     if (size == 0)
         return NULL;
-
-    /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= DSIZE)
-        asize = 2 * DSIZE;
-    else
-        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1))/ DSIZE);
-
+   
     /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL) {
-        place(bp, asize);
-        return bp;
-    }
+    
+	adjustedSize = getAdjustedSize(size);
+    currIndex = getIndex(adjustedSize);	
 
-    /* No fit found. Get more memory and place the block */
-    extendsize = MAX(asize, CHUNKSIZE);
+    while((!assignedBlock) && (currIndex < NUM_BINS))
+	{
+		baseOfIndex = HeapStart + currIndex*WSIZE;
+		if(GET(baseOfIndex))
+		{
+			assignedBlock = getBestFit(baseOfIndex,adjustedSize,currIndex);
+        }
+        currIndex++;
+	}	
+	
+	if(!assignedBlock)
+	{
+        assignedBlock = extendHeapAndAlloc(adjustedSize);
+		if(assignedBlock==NULL)
+        {
+            return NULL;
+        }
+        place(assignedBlock, adjustedSize);
+        return assignedBlock;
+	}
+
+    currIndex--;
+
+	markAssigned(assignedBlock, adjustedSize,currIndex);
+    return assignedBlock;
+}
+
+void testMalloc()
+{
+
+    size_t adjustedSize = 1000000;
+    size_t adjustedSize2 = 10000;
+
+    size_t mallocRequest = 100;    
+
+    char* bp;
+    char* bp2;
+    void* baseOfIndex;
+    void* testIndex;
+
+    bp = extend_heap(adjustedSize/WSIZE);
+    if(bp)
+    {
+        int currIndex = getIndex(adjustedSize);
+        baseOfIndex = currIndex*WSIZE + HeapStart;
+        PUT(baseOfIndex,bp);
+    }
+	else
+	{
+		printf("extend heap failed\n");
+		return;
+	}
+    
+    bp2 = extend_heap(adjustedSize2/WSIZE);
+    if(bp2)
+    {
+        int currIndex = getIndex(adjustedSize2);
+        baseOfIndex = currIndex*WSIZE + HeapStart;
+        PUT(GET(baseOfIndex)+WSIZE,bp2);
+        PUT(bp2,GET(baseOfIndex));
+	}
+    else
+	{
+		printf("extend heap failed\n");
+		return;
+	}
+    
+    printSegList();
+
+    char* test = mm_malloc(mallocRequest);
+    printf("Size of allocated chunk is %zu\n",GET_SIZE(HDRP(test)));
+    printSegList();
+}
+
+
+
+ /* getBestFit
+ *
+ *
+ **********************************************************/
+void *getBestFit(void* baseOfIndex,size_t adjustedSize,int currIndex)
+{
+
+
+	if (currIndex < NUM_BINS-1)
+	{
+		//Returns head of LinkedList 
+        return GET(baseOfIndex);
+	    
+    }
+	else
+	{
+		//Find Best fit in the last bin
+		void *currentNode = GET(baseOfIndex);
+		void *bestNode = NULL;
+		size_t minSize = 0;		
+
+		while(currentNode)
+		{
+			if((adjustedSize < GET_SIZE(HDRP(currentNode))) && ((GET_SIZE(HDRP(currentNode)) < minSize)||!bestNode))
+			{
+				minSize = GET_SIZE(HDRP(currentNode));
+				bestNode = currentNode;
+			}
+			
+			//Gets next node
+			currentNode = GET(currentNode+WSIZE);
+		}
+		return bestNode;
+	}
+} 
+
+void testGetBestFit()
+{
+    size_t adjustedSize = 32;
+    size_t adjustedSize2 = 32;
+
+    char* bp;
+    char* bp2;
+    void* baseOfIndex;
+    void* testIndex;
+
+    bp = extend_heap(adjustedSize/WSIZE);
+    if(bp)
+    {
+        int currIndex = getIndex(adjustedSize);
+        baseOfIndex = currIndex*WSIZE + HeapStart;
+        PUT(baseOfIndex,bp);
+    }
+	else
+	{
+		printf("extend heap failed\n");
+		return;
+	}
+    
+    bp2 = extend_heap(adjustedSize2/WSIZE);
+    if(bp2)
+    {
+        int currIndex = getIndex(adjustedSize2);
+        baseOfIndex = currIndex*WSIZE + HeapStart;
+        void* head = GET(baseOfIndex);
+        
+        PUT(head+WSIZE,bp2);
+        PUT(bp2,head);
+        PUT(bp2+WSIZE,NULL);
+    }
+	else
+	{
+		printf("extend heap failed\n");
+		return;
+	}
+
+    //testIndex = getBestFit(baseOfIndex,adjustedSize2,currIndex);
+    
+    printSegList();
+
+    if(testIndex == bp)
+    {
+        //markAssigned(bp,adjustedSize2);
+    }
+    else if(testIndex == bp2)
+    {
+       // markAssigned(testIndex,adjustedSize2,currIndex);
+    }
+    else
+    {
+        printf("Failure , test is %zu, givenP is %zu \n",testIndex,bp);
+    }
+    printf("____________________________________\n");
+
+    printSegList();
+}
+
+void *extendHeapAndAlloc(size_t adjustedSize)
+{
+    /*If block not found in free list extend the heap*/
+    size_t extendsize;
+    extendsize = MAX(adjustedSize, CHUNKSIZE);
+    char* bp; //block pointer
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
-    place(bp, asize);
     return bp;
+}
+
+/*******************************************
+ *markAssigned
+ *Sets block as assigned in Header and Footer
+ *Removes block from appropriate free list
+***********************************************/
+void markAssigned(void* assignedBlock,size_t adjustedSize,int currIndex)
+{
+    place(assignedBlock,adjustedSize);
+
+    void* prev = GET(assignedBlock);
+    void* next = GET(assignedBlock+WSIZE);
+
+    if(prev!=NULL)
+    {
+        GET(prev+WSIZE) = next;
+    }
+    
+    if(next!=NULL)
+    {
+        GET(next) = prev;
+    }
+    
+    //If assigned Node is a head, we have to have change value of head in global segregated list
+    if(prev==NULL)
+    {
+        void* baseOfIndex = currIndex*WSIZE + HeapStart;
+        PUT(baseOfIndex,next);
+    }
 
 }
+
+
 
 /**********************************************************
  * mm_realloc
