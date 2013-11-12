@@ -81,14 +81,13 @@ void printSegList()
    {
        int label = (i+1)*16;
        void* binPtr = HeapStart + WSIZE*i;
-       printf("(%p) %d->",binPtr,label);
+       printf("(%p) %d: ",binPtr,label);
        if(binPtr)
        {
            void* currentNode = GET(binPtr);
            while(currentNode)
            {
-             printf("%p-->",currentNode);
-             fflush(stdout);
+             printf("%p(%d)->",currentNode, GET_SIZE(HDRP(currentNode)));
              currentNode = GET(currentNode+WSIZE);
            }
        }
@@ -235,6 +234,7 @@ void *extend_heap(size_t words)
 
     /* Coalesce if the previous block was free */
     //return coalesce(bp);
+    printf("Allocating %p\n", bp);
     return bp;
 }
 
@@ -308,8 +308,9 @@ void mm_free(void *blockPointer)
     }
 
     size_t adjustedSize = GET_SIZE(HDRP(blockPointer));
-    printf("adjusted size before %zu\n",adjustedSize);
     PUT(HDRP(blockPointer), PACK(adjustedSize,0));
+    if(adjustedSize == 0)
+        printf("MM FREE: Size is 0 on block %p\n", blockPointer);
     PUT(FTRP(blockPointer), PACK(adjustedSize,0));
     //coalesce(blockPointer);
 
@@ -317,9 +318,6 @@ void mm_free(void *blockPointer)
     void* baseFromIndex = HeapStart + currIndex*WSIZE;
     void* head = GET(baseFromIndex);
 
-    //printSegList();
-    printf("Adj Size: %d, Index: %d\n", adjustedSize, (currIndex+1)*DSIZE);
-    
     //Change head in global segregated list
     PUT(baseFromIndex, blockPointer);
 
@@ -390,10 +388,6 @@ void *mm_malloc(size_t size)
     /* Search the free list for a fit */
     
 	adjustedSize = getAdjustedSize(size);
-    if (adjustedSize== 0)
-    {
-        printf("Adjusted size is 0!!!!!!!!\n");
-    }
 
     currIndex = getIndex(adjustedSize);	
 
@@ -415,6 +409,7 @@ void *mm_malloc(size_t size)
             return NULL;
         }
         place(assignedBlock, adjustedSize);
+        printf("Got assigned block %p (%d)\n", assignedBlock, GET_SIZE(HDRP(assignedBlock)));
         return assignedBlock;
 	}
 
@@ -477,11 +472,7 @@ void addFreeList(void* blockPointer);
 
 void* split(void* mainBlock, size_t adjustedSize)
 {
-    
-    printf("Adjusted size in split is %zu\n",adjustedSize);
-    printf("Size of main block is %zu\n", GET_SIZE(HDRP(mainBlock)));
-    fflush(stdout);
-    
+    /*
     if(GET_SIZE(HDRP(mainBlock))== adjustedSize)
     {
             return mainBlock;
@@ -525,6 +516,9 @@ void* split(void* mainBlock, size_t adjustedSize)
     
     addFreeList(wantBlock);
     addFreeList(remBlock);
+    /*
+
+    void* wantBlock = mainBlock;
 
     return wantBlock;
 }
