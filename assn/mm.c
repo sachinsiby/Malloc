@@ -109,7 +109,7 @@ void printSegList()
 	// ADD COMMENTS HERE
 	int i;	
 	
-	HeapStart = extend_heap_init((size_t)NUM_BINS);
+	HeapStart = extend_heap_init((size_t)NUM_BINS+1);
 	if(!HeapStart)
 	{
 		return -1;
@@ -122,7 +122,8 @@ void printSegList()
 	}
 
 	MemStart = HeapStart + WSIZE*NUM_BINS;
-	return 0;
+    //MemStart += WSIZE;
+    return 0;
  }
 
 
@@ -196,7 +197,8 @@ void *extend_heap_init(size_t words) {
     size_t size;
 
     /* Allocate an even number of words to maintain alignments */
-    size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+    //size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+    size = words * WSIZE;
     if ( (bp = mem_sbrk(size)) == (void *)-1 )
         return NULL;
 
@@ -306,15 +308,17 @@ void mm_free(void *blockPointer)
     }
 
     size_t adjustedSize = GET_SIZE(HDRP(blockPointer));
+    printf("adjusted size before %zu\n",adjustedSize);
     PUT(HDRP(blockPointer), PACK(adjustedSize,0));
     PUT(FTRP(blockPointer), PACK(adjustedSize,0));
     //coalesce(blockPointer);
 
-    printf("Size of block is %zu\n",adjustedSize);
     int currIndex = getIndex(adjustedSize);
     void* baseFromIndex = HeapStart + currIndex*WSIZE;
-    printf("location is %p\n",baseFromIndex);
     void* head = GET(baseFromIndex);
+
+    //printSegList();
+    printf("Adj Size: %d, Index: %d\n", adjustedSize, (currIndex+1)*DSIZE);
     
     //Change head in global segregated list
     PUT(baseFromIndex, blockPointer);
@@ -386,6 +390,11 @@ void *mm_malloc(size_t size)
     /* Search the free list for a fit */
     
 	adjustedSize = getAdjustedSize(size);
+    if (adjustedSize== 0)
+    {
+        printf("Adjusted size is 0!!!!!!!!\n");
+    }
+
     currIndex = getIndex(adjustedSize);	
 
     while((!assignedBlock) && (currIndex < NUM_BINS))
@@ -411,7 +420,7 @@ void *mm_malloc(size_t size)
 
     currIndex--;
 
-	markAssigned(assignedBlock, adjustedSize,currIndex);
+    markAssigned(assignedBlock, adjustedSize,currIndex);
     return assignedBlock;
 }
 
@@ -462,6 +471,136 @@ void testMalloc()
     printSegList();
 }
 
+void updateOH(void* blockPointer,size_t adjustedSize);
+void removeFromFreeList(void* blockPointer);
+void addFreeList(void* blockPointer);
+
+void* split(void* mainBlock, size_t adjustedSize)
+{
+    
+    printf("Adjusted size in split is %zu\n",adjustedSize);
+    printf("Size of main block is %zu\n", GET_SIZE(HDRP(mainBlock)));
+    fflush(stdout);
+    
+    if(GET_SIZE(HDRP(mainBlock))== adjustedSize)
+    {
+            return mainBlock;
+    }
+
+    
+    size_t currPayloadSize = GET_SIZE(HDRP(mainBlock)) - DSIZE;
+    size_t wantSize = adjustedSize - DSIZE; // Required Payload Size
+
+    if(wantSize + DSIZE > currPayloadSize)
+    {
+        return NULL;
+    }
+    
+    //Check Alignment requirements
+    if(wantSize%DSIZE!= 0)
+    {
+        return NULL; 
+    }
+
+    removeFromFreeList(mainBlock);
+    
+    size_t remSize = currPayloadSize - wantSize - DSIZE;
+
+    void* wantBlock = mainBlock;
+    void* remBlock = wantBlock + wantSize + DSIZE;
+
+    updateOH(wantBlock,wantSize+DSIZE);
+    updateOH(remBlock,remSize+DSIZE);
+
+    if(GET_SIZE(HDRP(remBlock))==0)
+    {
+        printf("Size of remaining block is 0");
+    }
+   
+    
+    if(GET_SIZE(HDRP(wantBlock))==0)
+    {
+        printf("Size of wanted block is 0");
+    }
+    
+    addFreeList(wantBlock);
+    addFreeList(remBlock);
+
+    return wantBlock;
+}
+
+void testSplit()
+{
+    //Allocate one 64 bit chunk
+    //void* a = mm_malloc(10000000000);
+    void* a = mm_malloc(140697896576272);
+
+    //void* b = mm_malloc(112);
+    
+    //Free it
+    mm_free(a);
+    //mm_free(b);
+
+    //Printe Free List
+    printSegList();
+
+    printf("----------------------------\n\n\n");
+    //call Split(p,32)
+    //void* c = mm_malloc(32);
+    split(a,4096);
+
+    //Print Free List
+    printf("After Malloc\n");
+    printSegList();
+}
+
+
+
+void updateOH(void* blockPointer,size_t adjustedSize)
+{
+    /* Set allocated value to "unused" */
+     PUT(HDRP(blockPointer), PACK(adjustedSize, 0));
+     PUT(FTRP(blockPointer), PACK(adjustedSize, 0));
+}
+
+
+void removeFromFreeList(void* blockPointer)
+{
+    if(blockPointer==NULL)
+    {
+        return; 
+    }
+    
+    void* prev = GET(blockPointer);
+    void* next = GET(blockPointer+WSIZE);
+
+    if(prev!=NULL)
+    {
+        GET(prev+WSIZE) = next;
+    }
+    
+    if(next!=NULL)
+    {
+        GET(next) = prev;
+    }
+    
+    //If assigned Node is a head, we have to have change value of head in global segregated list
+    if(prev==NULL)
+    {
+        //calculate currIndex
+        size_t size = GET_SIZE(HDRP(blockPointer));
+        int currIndex = getIndex(size);
+        void* baseOfIndex = currIndex*WSIZE + HeapStart;
+        PUT(baseOfIndex,next);
+    }
+
+}
+
+void addFreeList(void* blockPointer)
+{
+    mm_free(blockPointer);
+}
+
 
 
  /* getBestFit
@@ -471,12 +610,12 @@ void testMalloc()
 void *getBestFit(void* baseOfIndex,size_t adjustedSize,int currIndex)
 {
 
-
-	if (currIndex < NUM_BINS-1)
+    if (currIndex < NUM_BINS-1)
 	{
 		//Returns head of LinkedList 
-        return GET(baseOfIndex);
-	    
+        void* splitPointer = split(GET(baseOfIndex),adjustedSize);
+        return splitPointer;
+        
     }
 	else
 	{
@@ -496,9 +635,16 @@ void *getBestFit(void* baseOfIndex,size_t adjustedSize,int currIndex)
 			//Gets next node
 			currentNode = GET(currentNode+WSIZE);
 		}
-		return bestNode;
+        if(!bestNode)
+        {
+            return bestNode;
+        } 
+        return split(bestNode,adjustedSize);
+        //return bestNode;
 	}
 } 
+
+
 
 void testGetBestFit()
 {
@@ -579,11 +725,17 @@ void *extendHeapAndAlloc(size_t adjustedSize)
 ***********************************************/
 void markAssigned(void* assignedBlock,size_t adjustedSize,int currIndex)
 {
+
     place(assignedBlock,adjustedSize);
+
 
     void* prev = GET(assignedBlock);
     void* next = GET(assignedBlock+WSIZE);
 
+
+
+    removeFromFreeList(assignedBlock);
+    /*
     if(prev!=NULL)
     {
         GET(prev+WSIZE) = next;
@@ -601,6 +753,7 @@ void markAssigned(void* assignedBlock,size_t adjustedSize,int currIndex)
         PUT(baseOfIndex,next);
     }
 
+    */
 }
 
 
